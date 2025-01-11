@@ -1,0 +1,7 @@
+[
+    {
+        "name": "ping",
+        "type": 1,
+        "description": "Ping the bot"
+    }
+]

@@ -1,3 +1,10 @@
+use std::fs::OpenOptions;
+use std::io::{self, Write};
+use std::env;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use std::sync::Mutex;
+
 pub struct BotConfig {
     pub base_api_url: String,
     pub token: String,
@@ -15,14 +22,14 @@ impl BotConfig {
             base_api_url: String::from("https://discord.com/api/v10"),
             token: token.clone(),
             app_id: app_id.clone(),
-            user_agent: String::from("User-Agent: DiscordBot(www.rikka-space.com, 10)"),
-            content_type: String::from("Content-Type: application/json"),
-            auth: format!("Authorization: Bot {}", token),
+            user_agent: String::from("DiscordBot(www.rikka-space.com, 10)"),
+            content_type: String::from("application/json"),
+            auth: format!("Bot {}", token),
         }
     }
 }
 
-pub async fn get_word_valid(word: &str) -> bool {
+pub async fn _get_word_valid(word: &str) -> bool {
     let base_url = "https://api.dictionaryapi.dev/api/v2/entries/en/";
     let target_url = base_url.to_owned() + word;
 
@@ -45,4 +52,69 @@ pub async fn get_word_valid(word: &str) -> bool {
     }
 
     false
+}
+
+lazy_static::lazy_static! {
+    static ref VERBOSE_LOGGING_ENABLED: Mutex<Option<bool>> = Mutex::new(None);
+}
+
+pub async fn verbose_log_async(message: &str) {
+    let mut verbose_enabled = VERBOSE_LOGGING_ENABLED.lock().unwrap();
+    
+    if verbose_enabled.is_none() {
+        let verbose = env::var("verbose").unwrap_or_else(|_| String::new());
+        *verbose_enabled = Some(verbose == "true" || verbose == "1");
+    }
+
+    if (*verbose_enabled).unwrap_or_else(|| false) {
+        let now = chrono::offset::Local::now();
+        let time_string = now.format("%H:%M:%S").to_string();
+        let log_message = format!("{} - {}", time_string, message);
+        println!("{}", log_message);
+
+        let path = "log.txt";
+        match fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .await
+        {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(log_message.as_bytes()).await {
+                    eprintln!("Failed to write to log file: {}", e);
+                }
+                if let Err(e) = file.write_all(b"\n").await {
+                    eprintln!("Failed to write newline to log file: {}", e);
+                }
+            }
+            Err(e) => eprintln!("Failed to open log file: {}", e),
+        }
+    }
+}
+
+pub fn verbose_log_sync(message: &str) -> io::Result<()> {
+    let mut verbose_enabled = VERBOSE_LOGGING_ENABLED.lock().unwrap();
+    
+    if verbose_enabled.is_none() {
+        let verbose = env::var("verbose").unwrap_or_else(|_| String::new());
+        *verbose_enabled = Some(verbose == "true" || verbose == "1");
+    }
+
+    if (*verbose_enabled).unwrap_or_else(|| false) {
+        let now = chrono::offset::Local::now();
+        let time_string = now.format("%H:%M:%S").to_string();
+        let log_message = format!("{} - {}", time_string, message);
+        println!("{}", log_message);
+
+        let path = "log.txt";
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)?;
+
+        file.write_all(log_message.as_bytes())?;
+        file.write_all(b"\n")?;
+    }
+
+    Ok(())
 }

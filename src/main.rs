@@ -1,11 +1,16 @@
 mod utility;
 mod commands;
+mod gateway;
+mod event;
 
 #[tokio::main]
 async fn main() {
     let config = utility::BotConfig::new();
 
-    commands::register_commands(&config).await;
+    match commands::register_commands(&config).await {
+        Ok(_) => println!("Commands registered successfully!"),
+        Err(_) => println!("Error registering commands"),
+    }
 
-    println!("Hello, world!");
+    let _ = gateway::login_bot(&config).await;
 }

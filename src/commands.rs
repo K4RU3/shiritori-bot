@@ -1,10 +1,23 @@
 use futures::future;
 use std::option::Option;
-use reqwest::Error;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Serialize, Deserialize};
 use tokio::fs;
 use crate::utility::BotConfig;
+use crate::utility::{verbose_log_async, verbose_log_sync};
+
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    code: u16,
+    message: String,
+    errors: Option<ErrorDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorDetails {
+    #[serde(flatten)]
+    _fields: serde_json::Value,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Command {
@@ -12,7 +25,8 @@ struct Command {
     #[serde(rename = "type")]
     r#type: u8,
     description: String,
-    options: Vec<CommandOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<Vec<CommandOption>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -22,7 +36,18 @@ struct CommandOption {
     #[serde(rename = "type")]
     r#type: u8,
     required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     choices: Option<Vec<CommandChoice>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_value: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_value: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    autocomplete: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -35,29 +60,64 @@ async fn read_commands_from_file(file_path: &str) -> Result<Vec<Command>, ()> {
     let file_content = fs::read_to_string(file_path).await.unwrap();
     match serde_json::from_str(&file_content) {
         Ok(commands) => Ok(commands),
-        Err(_) => Err(()),
+        Err(e) => {
+            let error_message = format!("Error reading commands.json file: {}", e.to_string());
+            if let Err(log_error) = verbose_log_sync(&error_message) {
+                eprintln!("Failed to write to log: {}", log_error);
+            }
+
+            Err(())
+        }
     }
 }
 
-#[tokio::main]
-async fn register_command<'a>
-    (   target_url: &'a str,
-        original_client:&'a reqwest::Client,
-        command: &'a Command,
-        original_headers: &'a HeaderMap
-    ) -> Result<&'a Command, &'a Command> {
-    let client = original_client.clone();
-    let headers = original_headers.clone();
-    let post_body = serde_json::to_string(&command).unwrap();
-
-    client
-        .post(target_url)
+async fn register_command(
+    target_url: String,
+    client: reqwest::Client,
+    command_json: String,
+    headers: HeaderMap,
+) -> Result<(), ()> {
+    let result = client
+        .post(&target_url)
         .headers(headers)
-        .body(post_body)
+        .body(command_json.clone())
         .send()
-        .await
-        .map_err(|_| Err(command))
-        .and_then(|_| Ok(command))
+        .await;
+
+    verbose_log_async(format!("Sending request to {} with body {}", target_url, command_json).as_str()).await;
+
+    match result {
+        Ok(result) => {
+            let body = result.text().await.unwrap();
+            verbose_log_async(format!("Response body: {}", body).as_str()).await;
+
+            if let Ok(parsed_error) = serde_json::from_str::<ErrorResponse>(&body) {
+                let log_message = format!(
+                    "Register command error {}: {}\n{:?}\n",
+                    parsed_error.code,
+                    parsed_error.message,
+                    parsed_error.errors
+                );
+
+                verbose_log_async(&log_message).await;
+                return Err(());
+            }
+
+            Ok(())
+        },
+
+        Err(e) => {
+            let log_message = format!(
+                "Error sending request to {} with body {}: {}\n",
+                target_url,
+                command_json,
+                e.to_string()
+            );
+
+            verbose_log_async(&log_message).await;
+            Err(())
+        }
+    }
 }
 
 pub async fn register_commands(config: &BotConfig) -> Result<(), ()> {
@@ -68,11 +128,27 @@ pub async fn register_commands(config: &BotConfig) -> Result<(), ()> {
             let client = reqwest::Client::new();
             let mut headers = HeaderMap::new();
 
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            headers.insert("Authorization", HeaderValue::from_str(&format!("Bot {}", config.token)).unwrap());
-            headers.insert("User-Agent", HeaderValue::from_str("DiscordBot(www.rikka-space.com,10)").unwrap());
+            headers.insert(CONTENT_TYPE, HeaderValue::from_str(&config.content_type).unwrap());
+            headers.insert("Authorization", HeaderValue::from_str(&config.auth).unwrap());
+            headers.insert("User-Agent", HeaderValue::from_str(&config.user_agent).unwrap());
 
-            
+            let futures: Vec<_> = commands.iter().map(|command| {
+                let target_url = target_url.clone();
+                let client = client.clone();
+                let command_json = serde_json::to_string(command).unwrap();
+                let headers = headers.clone();
+                register_command(target_url, client, command_json, headers)
+            }).collect();
+
+            let results = future::join_all(futures).await;
+
+            for i in 0..commands.len() {
+                match results[i] {
+                    Ok(_) => println!("Loaded command: {}", commands[i].name),
+                    Err(_) => println!("Failed to load command: {}", commands[i].name),
+                }
+            }
+
             Ok(())
         }
 
@@ -81,26 +157,4 @@ pub async fn register_commands(config: &BotConfig) -> Result<(), ()> {
             Err(())
         }
     }
-}
-
-
-
-
-// test codes
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    // HTTPS URL
-    let url = "https://www.example.com";
-
-    // GETリクエストを送信
-    let response = reqwest::get(url).await?;
-
-    // レスポンスのステータスコードを表示
-    println!("Response Status: {}", response.status());
-
-    // レスポンスボディを文字列として取得して表示
-    let body = response.text().await?;
-    println!("Response Body: {}", body);
-
-    Ok(())
 }
