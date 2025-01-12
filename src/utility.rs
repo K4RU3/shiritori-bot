@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::env;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 pub struct BotConfig {
     pub base_api_url: String,
@@ -61,7 +61,7 @@ lazy_static::lazy_static! {
 }
 
 pub async fn verbose_log_async(message: &str) {
-    let mut verbose_enabled = VERBOSE_LOGGING_ENABLED.lock().unwrap();
+    let mut verbose_enabled = VERBOSE_LOGGING_ENABLED.lock().await;
     
     if verbose_enabled.is_none() {
         let verbose = env::var("verbose").unwrap_or_else(|_| String::new());
@@ -92,31 +92,4 @@ pub async fn verbose_log_async(message: &str) {
             Err(e) => eprintln!("Failed to open log file: {}", e),
         }
     }
-}
-
-pub fn verbose_log_sync(message: &str) -> io::Result<()> {
-    let mut verbose_enabled = VERBOSE_LOGGING_ENABLED.lock().unwrap();
-    
-    if verbose_enabled.is_none() {
-        let verbose = env::var("verbose").unwrap_or_else(|_| String::new());
-        *verbose_enabled = Some(verbose == "true" || verbose == "1");
-    }
-
-    if (*verbose_enabled).unwrap_or_else(|| false) {
-        let now = chrono::offset::Local::now();
-        let time_string = now.format("%H:%M:%S").to_string();
-        let log_message = format!("{} - {}", time_string, message);
-        println!("{}", log_message);
-
-        let path = "log.txt";
-        let mut file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(path)?;
-
-        file.write_all(log_message.as_bytes())?;
-        file.write_all(b"\n")?;
-    }
-
-    Ok(())
 }

@@ -1,15 +1,25 @@
+use futures::executor::EnterError;
+use futures::io::Read;
+use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Serialize, Deserialize};
 use reqwest;
+use tokio::net::TcpStream;
 use std::sync::Arc;
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
 use crate::event::create_message;
 use crate::utility::{self, verbose_log_async, BotConfig};
+
+macro_rules! spawn {
+    ($task:expr) => {
+        tokio::spawn($task);
+    };
+}
 
 
 #[derive(Serialize, Deserialize)]
@@ -36,15 +46,22 @@ pub async fn login_bot() {
 
     let (ws_stream, _) = connect_async(&ws_url).await.expect("Failed to connect to gateway");
     let (write, mut read) = ws_stream.split();
-    let write: Arc<Mutex<futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>>> = Arc::new(Mutex::new(write));
+    let write: StreamLock = Arc::new(Mutex::new(write));
     println!("Connected to gateway at {}", ws_url);
 
     {
         let mut write_stream = write.lock().await;
+        verbose_log_async(format!("Sending identify: {}", identify).as_str()).await;
         write_stream.send(Message::text(identify)).await.expect("Failed to send identify");
     }
 
+    spawn!(main_loop(write, read, config));
+    
+    spawn!(registry_for());
 
+}
+
+async fn main_loop(write: StreamLock, mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>, config: &BotConfig) {
     loop {
         let stream = read.next().await.expect("Failed to receive message from gateway");
         match stream {
@@ -66,7 +83,7 @@ pub async fn login_bot() {
                                 let mut write_stream = lock_clone.lock().await;
                                 write_stream.send(Message::text(HARTBEAT_REQUEST)).await.unwrap();
 
-                                println!("Sent heartbeat");
+                                verbose_log_async("Sent heartbeat").await;
                             }
                         });
                     } else if op == 0 {
@@ -87,36 +104,23 @@ pub async fn login_bot() {
     }
 }
 
+async fn registry_for() {
+    let path = "channels/";
+
+    let entries = tokio::fs::read_dir(path).await.unwrap();
+
+    /*
+    for entry in entries.into_iter() {
+
+    }
+    */
+}
+
 async fn event_handler(event: serde_json::Value, config: &BotConfig) {
     match event["t"].as_str().unwrap() {
         "MESSAGE_CREATE" => {
             if event["d"]["author"]["bot"] != true {
-                let username = event["d"]["author"]["username"].as_str().unwrap();
-                let channel_id = event["d"]["channel_id"].as_str().unwrap();
-                let recieved_message = event["d"]["content"].as_str().unwrap();
-                let raw_message = format!("Test Message: {} -> {} at {}", username, recieved_message, channel_id);
-
-                let message = create_message(&raw_message);
-
-                let target_url = format!("{}/channels/{}/messages", config.base_api_url, channel_id);
-
-                let client = reqwest::Client::new();
-                let mut headers = HeaderMap::new();
-                headers.insert("Content-Type", HeaderValue::from_str(&config.content_type).unwrap());
-                headers.insert("Authorization", HeaderValue::from_str(&config.auth).unwrap());
-                headers.insert("User-Agent", HeaderValue::from_str(&config.user_agent).unwrap());
-
-                let result = client.post(&target_url).headers(headers).body(message).send().await;
-
-                match result {
-                    Ok(result) => {
-                        let body = result.text().await.unwrap();
-                        println!("Response body: {}", body);
-                    }
-                    Err(e) => {
-                        println!("Error: {}", e);
-                    }
-                }
+                
             }
         }
 

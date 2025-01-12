@@ -4,7 +4,7 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Serialize, Deserialize};
 use tokio::fs;
 use crate::utility::{self, BotConfig};
-use crate::utility::{verbose_log_async, verbose_log_sync};
+use crate::utility::{verbose_log_async};
 
 #[derive(Debug, Deserialize)]
 struct ErrorResponse {
@@ -62,9 +62,7 @@ async fn read_commands_from_file(file_path: &str) -> Result<Vec<Command>, ()> {
         Ok(commands) => Ok(commands),
         Err(e) => {
             let error_message = format!("Error reading commands.json file: {}", e.to_string());
-            if let Err(log_error) = verbose_log_sync(&error_message) {
-                eprintln!("Failed to write to log: {}", log_error);
-            }
+            verbose_log_async(&error_message).await;
 
             Err(())
         }
