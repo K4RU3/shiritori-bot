@@ -9,7 +9,7 @@ use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
 use crate::event::create_message;
-use crate::utility::{verbose_log_async, BotConfig};
+use crate::utility::{self, verbose_log_async, BotConfig};
 
 
 #[derive(Serialize, Deserialize)]
@@ -20,7 +20,8 @@ struct UrlResponse {
 const HARTBEAT_REQUEST: &str = "{\"op\":1, \"d\":null}";
 type StreamLock = Arc<Mutex<futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Message>>>;
 
-pub async fn login_bot(config: &BotConfig) {
+pub async fn login_bot() {
+    let config = &utility::CONFIG;
     let client = reqwest::Client::new();
     let gateway_url = "https://discordapp.com/api/gateway";
 

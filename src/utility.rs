@@ -29,6 +29,8 @@ impl BotConfig {
     }
 }
 
+lazy_static::lazy_static! { pub static ref CONFIG: BotConfig = BotConfig::new(); } // Globaly
+
 pub async fn _get_word_valid(word: &str) -> bool {
     let base_url = "https://api.dictionaryapi.dev/api/v2/entries/en/";
     let target_url = base_url.to_owned() + word;

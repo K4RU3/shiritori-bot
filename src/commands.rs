@@ -3,7 +3,7 @@ use std::option::Option;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Serialize, Deserialize};
 use tokio::fs;
-use crate::utility::BotConfig;
+use crate::utility::{self, BotConfig};
 use crate::utility::{verbose_log_async, verbose_log_sync};
 
 #[derive(Debug, Deserialize)]
@@ -120,7 +120,8 @@ async fn register_command(
     }
 }
 
-pub async fn register_commands(config: &BotConfig) -> Result<(), ()> {
+pub async fn register_commands() -> Result<(), ()> {
+    let config = &utility::CONFIG;
     let target_url = format!("{}/applications/{}/commands", config.base_api_url, config.app_id);
 
     match read_commands_from_file("commands.json").await {
