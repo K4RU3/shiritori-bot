@@ -1,18 +1,16 @@
-use futures::executor::EnterError;
-use futures::io::Read;
 use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Serialize, Deserialize};
 use reqwest;
 use tokio::net::TcpStream;
+use std::path::Path;
 use std::sync::Arc;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
-use crate::event::create_message;
+use crate::game::register;
 use crate::utility::{self, verbose_log_async, BotConfig};
 
 macro_rules! spawn {
@@ -45,7 +43,7 @@ pub async fn login_bot() {
     );
 
     let (ws_stream, _) = connect_async(&ws_url).await.expect("Failed to connect to gateway");
-    let (write, mut read) = ws_stream.split();
+    let (write, read) = ws_stream.split();
     let write: StreamLock = Arc::new(Mutex::new(write));
     println!("Connected to gateway at {}", ws_url);
 
@@ -105,18 +103,35 @@ async fn main_loop(write: StreamLock, mut read: SplitStream<WebSocketStream<Mayb
 }
 
 async fn registry_for() {
-    let path = "channels/";
+    verbose_log_async("Registering channels...").await;
+    let current_dir = std::env::current_dir().unwrap();
+    verbose_log_async(format!("Current directory: {}", current_dir.display()).as_str()).await;
 
-    let entries = tokio::fs::read_dir(path).await.unwrap();
+    let path_str = "./channels/";
 
-    /*
-    for entry in entries.into_iter() {
+    let path: &Path = Path::new(path_str);
+    if path.exists() && path.is_dir() {
+        let dir = match std::fs::read_dir(path) {
+            Ok(dir) => dir,
+            Err(e) => {
+                println!("Failed to read channels directory: {}", e);
+                return;
+            }
+        };
 
+        for entry in dir {
+            let channel = entry.unwrap().path();
+            let path_name = channel.display().to_string();
+            if channel.is_dir() {
+                spawn!(register(path_name));
+            }
+        }
+    } else {
+        verbose_log_async(format!("{} is not a directory or does not exist", path_str).as_str()).await;
     }
-    */
 }
 
-async fn event_handler(event: serde_json::Value, config: &BotConfig) {
+async fn event_handler(event: serde_json::Value, _config: &BotConfig) {
     match event["t"].as_str().unwrap() {
         "MESSAGE_CREATE" => {
             if event["d"]["author"]["bot"] != true {

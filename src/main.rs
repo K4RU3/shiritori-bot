@@ -12,4 +12,6 @@ async fn main() {
     }
 
     let _ = gateway::login_bot().await;
+
+    loop {}
 }

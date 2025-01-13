@@ -3,8 +3,7 @@ use std::option::Option;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Serialize, Deserialize};
 use tokio::fs;
-use crate::utility::{self, BotConfig};
-use crate::utility::{verbose_log_async};
+use crate::utility::{self, verbose_log_async};
 
 #[derive(Debug, Deserialize)]
 struct ErrorResponse {
@@ -57,7 +56,7 @@ struct CommandChoice {
 }
 
 async fn read_commands_from_file(file_path: &str) -> Result<Vec<Command>, ()> {
-    let file_content = fs::read_to_string(file_path).await.unwrap();
+    let file_content = fs::read_to_string(file_path).await.map_err(|_| ())?;
     match serde_json::from_str(&file_content) {
         Ok(commands) => Ok(commands),
         Err(e) => {

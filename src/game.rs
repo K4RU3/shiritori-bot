@@ -1,7 +1,7 @@
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::io::Write;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use lazy_static::lazy_static;
 
 use serde::{Serialize, Deserialize};
@@ -19,24 +19,34 @@ pub struct Channel {
     words: Option<BTreeSet<String>>
 }
 
-pub async fn register(channnel_id: &str) {
+pub async fn register(channel_path: String) {
+    let path_name = format!("{}/data.json", channel_path);
+
     let channel_data_file = OpenOptions::new()
         .create(true)
         .write(true)
-        .open(format!("channels/{}/data.json", channnel_id));
+        .open(path_name.clone());
 
     match channel_data_file {
         Ok(mut file) => {
-            let channel = match serde_json::from_reader(&mut file) {
+            let abs_path = fs::canonicalize(&channel_path).unwrap();
+            let abs_path_string = abs_path.to_str().unwrap().to_string();
+            verbose_log_async(&format!("Absolute path: {}", abs_path_string)).await;
+
+            let channel: Channel = match serde_json::from_reader(&mut file) {
                 Ok(channel) => channel,
                 Err(e) => {
-                    println!("Failed to read channel data: {}", channnel_id);
+                    println!("Failed to read channel data: {}", path_name);
                     verbose_log_async(&format!("Failed to read channel data: {}", e)).await;
                     return;
                 }
             };
 
-            let mut channels = CHANNELS.write().unwrap();
+            let mut channels = CHANNELS.write().await;
+
+            channels.insert(channel_path.clone(), channel);
+
+            println!("Registered channel: {}", channel_path);
         }
 
         Err(e) => {
@@ -44,56 +54,6 @@ pub async fn register(channnel_id: &str) {
             verbose_log_async(&format!("Failed to open channel: {}", e)).await;
         }
     }
-}
-
-pub async fn save_channel(channel_id: &str) {
-    let channel = {
-        let channels = CHANNELS.read().unwrap();
-        match channels.get(channel_id) {
-            Some(channel) => channel.clone(),
-            None => {
-                println!("Failed to save channel: {}", channel_id);
-                verbose_log_async(&format!("Failed to save channel: {}", channel_id)).await;
-                return;
-            }
-        }
-    };
-
-    let channel_data_json = serde_json::to_string(&channel).unwrap();
-
-    let channel_data_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(format!("channels/{}/data.json", channel_id));
-
-    match channel_data_file {
-        Ok(mut file) => {
-            match file.write_all(channel_data_json.as_bytes()) {
-                Ok(_) => {
-                    println!("Saved channel: {}", channel_id);
-                    verbose_log_async(&format!("Saved channel: {}", channel_id)).await;
-                }
-                Err(e) => {
-                    println!("Failed to save channel: {}", e);
-                    verbose_log_async(&format!("Failed to save channel: {}", e)).await;
-                }
-            }
-        }
-        Err(e) => {
-            println!("Failed to open channel: {}", e);
-            verbose_log_async(&format!("Failed to open channel: {}", e)).await;
-        }
-    }
-}
-
-pub async fn check_word_in_channel(channel_id: &str, target_word: &str) -> bool {
-    let channels = CHANNELS.read().unwrap();
-    if let Some(channel) = channels.get(channel_id) {
-        if let Some(words) = &channel.words {
-            return words.contains(target_word);
-        }
-    }
-    false
 }
 
 //queue.make_contiguous().reverse();
