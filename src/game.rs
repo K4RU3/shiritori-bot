@@ -122,4 +122,10 @@ pub async fn channel_exists(channel_id: &str) -> bool {
     channels.contains_key(channel_id)
 }
 
+pub async fn contains_word(channel_id: String, word: String) -> bool {
+    let channels = CHANNELS.read().await;
+    let channel = channels.get(&channel_id).unwrap();
+    channel.words.as_ref().unwrap().contains(&word)
+}
+
 //queue.make_contiguous().reverse();

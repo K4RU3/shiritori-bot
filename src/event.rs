@@ -1,6 +1,48 @@
-use regex::Regex;
+use std::{future::Future, pin::Pin};
 
-use crate::{game::{channel_exists, register}, utility::{generate_basic_message, generate_client, verbose_log_async, CONFIG}};
+use regex::Regex;
+use serde::{de, Deserialize, Serialize};
+
+use crate::{game::{channel_exists, contains_word, register}, spawn, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Message {
+    #[serde(rename = "type")]
+    r#type: u8,
+    id: String,
+    channel_id: String,
+    content: String,
+    mentions: Vec<User>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reactions: Option<Reaction>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Reaction {
+    count: u8,
+    count_details: Vec<CountDetails>,
+    me: bool,
+    me_burst: bool,
+    //emoji:
+    burst_colors: Vec<u8>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct CountDetails {
+    burst: u8,
+    normal: u8
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: String,
+    username: String,
+    global_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bot: Option<bool>,
+    permission_type: i32,
+}
 
 pub async fn check_mention_for_me(event: &serde_json::Value) -> Result<(), ()> {
     let mut through_flag = true;
@@ -38,7 +80,7 @@ pub async fn check_mention_for_me(event: &serde_json::Value) -> Result<(), ()> {
     }
 }
 
-pub async fn check_word(word: String) {
+pub async fn check_word(word: String, channel_id: String) {
     let reg = Regex::new(r"^[a-zA-Z][a-zA-Z\s\-]*[a-zA-Z]$").unwrap();
 
     if reg.is_match(&word) {
@@ -48,6 +90,89 @@ pub async fn check_word(word: String) {
         replaced = replaced.to_lowercase();
         replaced = space_reg.replace_all(&replaced, " ").to_string();
 
-        verbose_log_async(format!("Replaced word: {}", replaced).as_str()).await;
+        spawn!(manage_exsist_word(channel_id.clone(), replaced.clone()));
+        spawn!(manage_find_word(channel_id.clone(), replaced.clone()));
+        spawn!(manage_like_word(channel_id.clone(), replaced.clone()));
+        spawn!(manage_valid_vote(channel_id.clone(), replaced.clone()));
+    }
+}
+
+async fn manage_exsist_word(channel_id: String, word: String) {
+    let gen_after = {
+        let channel_id = channel_id.clone();
+        let word = word.clone();
+        move |message: Message| {
+            Box::pin(async move {
+                let contains = contains_word(channel_id.clone(), word.clone()).await;
+                let mut next_message;
+                if contains {
+                    next_message = format!("{} は既に使用されています。", word);
+                } else {
+                    next_message = format!("{} と完全一致する単語は使用されていません。", word);
+                }
+
+                generate_basic_message(next_message.as_str())
+            }) as Pin<Box<dyn Future<Output = String> + Send>>
+        }
+    };
+
+    send_and_patch(channel_id, format!("{} を検索中...", word), gen_after).await;
+}
+
+
+
+async fn manage_find_word(channel_id: String, word: String) {
+    let gen_after = {
+        let channel_id = channel_id.clone();
+        let word = word.clone();
+        move |message: Message| {
+            Box::pin(async move {
+                let exists = get_word_valid(word.clone()).await;
+                let mut next_message;
+                if exists {
+                    next_message = format!("{} が見つかりました。", word);
+                } else {
+                    next_message = format!("{} は見つかりませんでした。", word);
+                }
+
+                generate_basic_message(next_message.as_str())
+            }) as Pin<Box<dyn Future<Output = String> + Send>>
+        }
+    };
+
+    send_and_patch(channel_id, format!("{} を dictionary api で検索中...", word), gen_after).await;
+}
+
+async fn manage_like_word(channel_id: String, word: String) {
+    
+}
+
+async fn manage_valid_vote(channel_id: String, word: String) {
+
+}
+
+async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second_message: F) where F: FnOnce(Message) -> Pin<Box<dyn Future<Output = String> + Send>>, {
+    let client = generate_client();
+    let first_message_raw = generate_basic_message(first_message.as_str());
+    let res = match client.post(format!("{}/channels/{}/messages", CONFIG.base_api_url, channel_id)).body(first_message_raw).send().await {
+        Ok(res) => res,
+        Err(_) => return,
+    };
+    
+    let json: Message = match res.json().await {
+        Ok(json) => json,
+        Err(_) => {
+            verbose_log_async("Failed to parse message").await;
+            return
+        }
+    };
+
+    let message_id = json.id.clone();
+
+    let second_message = gen_second_message(json).await;
+
+    match client.patch(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, channel_id, message_id)).body(second_message).send().await {
+        Ok(res) => verbose_log_async(format!("Message edit: {}", res.status()).as_str()).await,
+        Err(e) => verbose_log_async(format!("Failed to send message: {}", e).as_str()).await,
     }
 }

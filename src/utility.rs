@@ -31,9 +31,9 @@ impl BotConfig {
 
 lazy_static::lazy_static! { pub static ref CONFIG: BotConfig = BotConfig::new(); } // Globaly
 
-pub async fn _get_word_valid(word: &str) -> bool {
+pub async fn get_word_valid(word: String) -> bool {
     let base_url = "https://api.dictionaryapi.dev/api/v2/entries/en/";
-    let target_url = base_url.to_owned() + word;
+    let target_url = format!("{}{}", base_url, word);
 
     let response = reqwest::get(&target_url).await;
 

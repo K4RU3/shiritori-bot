@@ -13,13 +13,7 @@ use tokio::sync::Mutex;
 use crate::event::{check_mention_for_me, check_word};
 use crate::game::{channel_exists, load_channel};
 use crate::utility::{self, verbose_log_async};
-
-macro_rules! spawn {
-    ($task:expr) => {
-        tokio::spawn($task);
-    };
-}
-
+use crate::spawn;
 
 #[derive(Serialize, Deserialize)]
 struct UrlResponse {
@@ -151,7 +145,7 @@ async fn event_handler(event: serde_json::Value) {
                 if channel_exists(&channel_id).await == true {
                     verbose_log_async("Channel active").await;
                     let content = event["d"]["content"].as_str().unwrap();
-                    spawn!(check_word(content.to_string()));
+                    spawn!(check_word(content.to_string(), channel_id.to_string()));
                 }
             }
         }

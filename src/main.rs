@@ -4,6 +4,13 @@ mod gateway;
 mod event;
 mod game;
 
+#[macro_export]
+macro_rules! spawn {
+    ($task:expr) => {
+        tokio::spawn($task);
+    };
+}
+
 #[tokio::main]
 async fn main() {
     utility::verbose_log_async("Starting NS Shiritori...").await;
