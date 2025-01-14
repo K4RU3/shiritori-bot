@@ -10,8 +10,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
-use crate::event::check_mention_for_me;
-use crate::game::{load_channel};
+use crate::event::{check_mention_for_me, check_word};
+use crate::game::{channel_exists, load_channel};
 use crate::utility::{self, verbose_log_async};
 
 macro_rules! spawn {
@@ -140,7 +140,19 @@ async fn event_handler(event: serde_json::Value) {
     match event["t"].as_str().unwrap() {
         "MESSAGE_CREATE" => {
             if event["d"]["author"]["bot"] != true {
-                check_mention_for_me(&event).await;
+                if check_mention_for_me(&event).await.is_ok() { return; }
+
+                verbose_log_async("Message received").await;
+                let channel_id = match event["d"]["channel_id"].as_str() {
+                    Some(channel_id) => channel_id,
+                    None => return
+                };
+
+                if channel_exists(&channel_id).await == true {
+                    verbose_log_async("Channel active").await;
+                    let content = event["d"]["content"].as_str().unwrap();
+                    spawn!(check_word(content.to_string()));
+                }
             }
         }
 

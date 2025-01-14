@@ -96,7 +96,7 @@ pub async fn load_channel(channel_id: String) -> Result<(), i32> {
     Ok(())
 }
 
-pub async fn _save_channel(channel_id: String) {
+pub async fn save_channel(channel_id: String) {
 
 }
 
@@ -112,7 +112,7 @@ pub async fn _save_all_channels() {
 
     for channel_id in channel_ids {
         tokio::spawn(async move {
-            _save_channel(channel_id).await;
+            save_channel(channel_id).await;
         });
     }
 }
