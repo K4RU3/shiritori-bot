@@ -1,4 +1,6 @@
 use std::env;
+use reqwest::header::HeaderValue;
+use reqwest::Client;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -90,4 +92,16 @@ pub async fn verbose_log_async(message: &str) {
             Err(e) => eprintln!("Failed to open log file: {}", e),
         }
     }
+}
+
+pub fn generate_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("User-Agent", HeaderValue::from_str(&CONFIG.user_agent).unwrap());
+    headers.insert("Authorization", HeaderValue::from_str(&CONFIG.auth).unwrap());
+    headers.insert("Content-Type", HeaderValue::from_str(&CONFIG.content_type).unwrap());
+    Client::builder().default_headers(headers).build().unwrap()
+}
+
+pub fn generate_basic_message(message: &str) -> String {
+    format!(r#"{{"content":"{}", "tts": false}}"#, message)
 }

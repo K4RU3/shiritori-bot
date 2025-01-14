@@ -6,6 +6,8 @@ mod game;
 
 #[tokio::main]
 async fn main() {
+    utility::verbose_log_async("Starting NS Shiritori...").await;
+
     match commands::register_commands().await {
         Ok(_) => println!("Commands registered successfully!"),
         Err(_) => println!("Error registering commands"),

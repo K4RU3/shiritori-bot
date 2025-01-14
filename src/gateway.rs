@@ -10,8 +10,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
-use crate::game::register;
-use crate::utility::{self, verbose_log_async, BotConfig};
+use crate::event::check_mention_for_me;
+use crate::game::{load_channel};
+use crate::utility::{self, verbose_log_async};
 
 macro_rules! spawn {
     ($task:expr) => {
@@ -53,13 +54,13 @@ pub async fn login_bot() {
         write_stream.send(Message::text(identify)).await.expect("Failed to send identify");
     }
 
-    spawn!(main_loop(write, read, config));
+    spawn!(main_loop(write, read));
     
     spawn!(registry_for());
 
 }
 
-async fn main_loop(write: StreamLock, mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>, config: &BotConfig) {
+async fn main_loop(write: StreamLock, mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>) {
     loop {
         let stream = read.next().await.expect("Failed to receive message from gateway");
         match stream {
@@ -85,7 +86,7 @@ async fn main_loop(write: StreamLock, mut read: SplitStream<WebSocketStream<Mayb
                             }
                         });
                     } else if op == 0 {
-                        event_handler(json, config).await;
+                        event_handler(json).await;
                     }
                 }
                 Message::Close(Some(close_frame)) => {
@@ -121,9 +122,13 @@ async fn registry_for() {
 
         for entry in dir {
             let channel = entry.unwrap().path();
-            let path_name = channel.display().to_string();
+            let file_name    = match channel.file_name().unwrap().to_str() {
+                Some(file_name) => file_name,
+                None => continue
+            };
+
             if channel.is_dir() {
-                spawn!(register(path_name));
+                spawn!(load_channel(file_name.to_string()));
             }
         }
     } else {
@@ -131,11 +136,11 @@ async fn registry_for() {
     }
 }
 
-async fn event_handler(event: serde_json::Value, _config: &BotConfig) {
+async fn event_handler(event: serde_json::Value) {
     match event["t"].as_str().unwrap() {
         "MESSAGE_CREATE" => {
             if event["d"]["author"]["bot"] != true {
-                
+                check_mention_for_me(&event).await;
             }
         }
 
