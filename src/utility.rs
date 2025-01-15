@@ -12,12 +12,20 @@ pub struct BotConfig {
     pub user_agent: String,
     pub content_type: String,
     pub auth: String,
+    pub msg_dist_threshold: f64,
 }
 
 impl BotConfig {
     pub fn new() -> Self {
         let token = std::env::var("DISCORD_TOKEN").expect("DISCORD_TOKEN is not set");
         let app_id = std::env::var("DISCORD_APP_ID").expect("DISCORD_APP_ID is not set");
+        let threshold = match std::env::var("MSG_DIST_THRESHOLD") {
+            Ok(val) => val,
+            Err(_) => {
+                println!("MSG_DIST_THRESHOLD is not set, defaulting to 0.3");
+                "0.3".to_string()
+            }
+        };
         Self {
             base_api_url: String::from("https://discord.com/api/v10"),
             token: token.clone(),
@@ -25,6 +33,7 @@ impl BotConfig {
             user_agent: String::from("DiscordBot(www.rikka-space.com, 10)"),
             content_type: String::from("application/json"),
             auth: format!("Bot {}", token),
+            msg_dist_threshold: threshold.parse().unwrap_or(0.3),
         }
     }
 }
