@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio::time::{self, Duration};
 use tokio::sync::Mutex;
 
-use crate::event::{check_mention_for_me, check_word};
+use crate::event::{check_mention_for_me, check_word, update_vote};
 use crate::game::{channel_exists, load_channel};
 use crate::utility::{self, verbose_log_async};
 use crate::spawn;
@@ -33,7 +33,7 @@ pub async fn login_bot() {
 
     let ws_url = url_response.url;
     let identify = format!(
-        r#"{{"op": 2, "d": {{"token": "{}", "properties": {{"os": "linux", "device": "device", "browser": "browser"}}, "intents": 513}}}}"#,
+        r#"{{"op": 2, "d": {{"token": "{}", "properties": {{"os": "linux", "device": "device", "browser": "browser"}}, "intents": 1536}}}}"#,
         config.token
     );
 
@@ -131,7 +131,8 @@ async fn registry_for() {
 }
 
 async fn event_handler(event: serde_json::Value) {
-    match event["t"].as_str().unwrap() {
+    let event_type = event["t"].as_str().unwrap_or("");
+    match event_type {
         "MESSAGE_CREATE" => {
             if event["d"]["author"]["bot"] != true {
                 if check_mention_for_me(&event).await.is_ok() { return; }
@@ -150,8 +151,14 @@ async fn event_handler(event: serde_json::Value) {
             }
         }
 
+        "MESSAGE_REACTION_ADD" => {
+            println!("Reaction added");
+            let _ = update_vote(&event["d"]).await;
+        }
+
         _ => {
-            
+            println!("Unknown event type: {}", event_type);
         }
     }
+        
 }

@@ -1,9 +1,16 @@
-use std::{future::Future, pin::Pin, thread::sleep};
-
+use std::{collections::HashSet, future::Future, pin::Pin};
 use regex::Regex;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use lazy_static::lazy_static;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use crate::{game::{channel_exists, contains_word, register, find_levenstein_distance, find_piece_equals}, spawn, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+use crate::{game::{channel_exists, contains_word, register, find_levenstein_distance, find_piece_equals}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+
+lazy_static! {
+    static ref VOTES: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Message {
@@ -42,6 +49,18 @@ struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     bot: Option<bool>,
     permission_type: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct UpdateReaction {
+    emoji: Emoji,
+    channel_id: String,
+    message_id: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Emoji {
+    name: String
 }
 
 pub async fn check_mention_for_me(event: &serde_json::Value) -> Result<(), ()> {
@@ -129,7 +148,7 @@ async fn manage_find_word(channel_id: String, word: String) {
                 let exists = get_word_valid(word.clone()).await;
                 let next_message;
                 if exists {
-                    next_message = format!("{} が見つかりました。", word);
+                    next_message = format!("{} が dictionary api で見つかりました。", word);
                 } else {
                     next_message = format!("{} は dictionary apiでは見つかりませんでした。", word);
                 }
@@ -177,8 +196,39 @@ async fn manage_like_word(channel_id: String, word: String) {
     send_and_patch(channel_id, format!("{} を使用単語から検索中...", word), gen_after).await;
 }
 
-async fn manage_valid_vote(_channel_id: String, _word: String) {
+async fn manage_valid_vote(channel_id: String, word: String) {
+    let client = generate_client();
+    let message = generate_basic_message(format!("{} の有効投票を開始します。", word).as_str());
 
+    let res = match client.post(format!("{}/channels/{}/messages", CONFIG.base_api_url, channel_id)).body(message).send().await {
+        Ok(res) => res,
+        Err(_) => return,
+    };
+
+    let text = res.text().await.unwrap_or("".to_string());
+
+    let json: Message = match serde_json::from_str(text.as_str()) {
+        Ok(json) => json,
+        Err(_) => {
+            verbose_log_async("Failed to parse message at vote").await;
+            return
+        }
+    };
+    let msg_id = json.id.clone();
+    
+    {
+        let mut vote_lock = VOTES.write().await;
+        vote_lock.insert(msg_id);
+    }
+
+    // up %F0%9F%91%8D%EF%B8%8F
+    // down %F0%9F%91%8E%EF%B8%8F
+    send_vote(client.clone(), channel_id.clone(), json.id.clone(), "👍".to_string()).await;
+    send_vote(client, channel_id, json.id.clone(), "👎".to_string()).await;
+}
+
+async fn send_vote(client: Client, channel_id: String, message_id: String, vote: String) {
+    let _ = client.put(format!(r#"{}/channels/{}/messages/{}/reactions/{}/@me"#, CONFIG.base_api_url, channel_id, message_id, vote)).send().await;
 }
 
 async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second_message: F) where F: FnOnce(Message) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + 'static, {
@@ -207,4 +257,22 @@ async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second
             Err(e) => verbose_log_async(format!("Failed to send message: {}", e).as_str()).await,
         };
     });
+}
+
+pub async fn update_vote(d: &serde_json::Value) {
+    let data: UpdateReaction = match serde_json::from_value(d.clone()) {
+        Ok(data) => data,
+        Err(_) => {
+            verbose_log_async(format!("Failed to parse message: {}", d).as_str()).await;
+            return;
+        }
+    };
+
+    {
+        let votes = VOTES.write().await;
+
+        if !votes.contains(data.message_id.as_str()) { return; }
+    }
+
+    //let res = match 
 }
