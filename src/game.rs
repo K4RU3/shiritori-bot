@@ -1,9 +1,11 @@
+use std::cmp::max;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::fs::{create_dir_all, metadata, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use lazy_static::lazy_static;
+use edit_distance::edit_distance;
 
 use serde::{Serialize, Deserialize};
 
@@ -96,8 +98,8 @@ pub async fn load_channel(channel_id: String) -> Result<(), i32> {
     Ok(())
 }
 
-pub async fn save_channel(channel_id: String) {
-
+pub async fn save_channel(_channel_id: String) {
+    todo!();
 }
 
 pub async fn _save_all_channels() {
@@ -126,6 +128,49 @@ pub async fn contains_word(channel_id: String, word: String) -> bool {
     let channels = CHANNELS.read().await;
     let channel = channels.get(&channel_id).unwrap();
     channel.words.as_ref().unwrap().contains(&word)
+}
+
+pub async fn find_piece_equals(channel_id: String, word: String) -> Option<Vec<String>> {
+    let words = {
+        let channels = CHANNELS.read().await;
+        let channel = channels.get(&channel_id)?;
+
+        match channel.words.as_ref() {
+            Some(words) => words.clone(),
+            None => return None,
+        }
+    };
+
+    let matches: Vec<String> = words.iter().filter(|w| w.contains(&word) || word.contains(*w)).cloned().collect();
+
+    if !matches.is_empty() {
+        Some(matches)
+    } else {
+        None
+    }
+}
+
+pub async fn find_levenstein_distance(channel_id: String, word: String, threshold: f64) -> Option<Vec<String>> {
+    let words = {
+        let channels = CHANNELS.read().await;
+        let channel = channels.get(&channel_id)?;
+
+        match channel.words.as_ref() {
+            Some(words) => words.clone(),
+            None => return None,
+        }
+    };
+
+    let matches: Vec<String> = words.iter().filter(|w| -> bool {
+        let distance = edit_distance(w, &word);
+        distance as f64 / (max(word.len(), w.len())) as f64 <= threshold
+    }).cloned().collect();
+
+    if !matches.is_empty() {
+        Some(matches)
+    } else {
+        None
+    }
 }
 
 //queue.make_contiguous().reverse();

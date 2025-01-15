@@ -1,9 +1,9 @@
 use std::{future::Future, pin::Pin};
 
 use regex::Regex;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
-use crate::{game::{channel_exists, contains_word, register}, spawn, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+use crate::{game::{channel_exists, contains_word, register, find_levenstein_distance, find_piece_equals}, spawn, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Message {
@@ -101,10 +101,10 @@ async fn manage_exsist_word(channel_id: String, word: String) {
     let gen_after = {
         let channel_id = channel_id.clone();
         let word = word.clone();
-        move |message: Message| {
+        move |_message: Message| {
             Box::pin(async move {
                 let contains = contains_word(channel_id.clone(), word.clone()).await;
-                let mut next_message;
+                let next_message;
                 if contains {
                     next_message = format!("{} は既に使用されています。", word);
                 } else {
@@ -123,16 +123,15 @@ async fn manage_exsist_word(channel_id: String, word: String) {
 
 async fn manage_find_word(channel_id: String, word: String) {
     let gen_after = {
-        let channel_id = channel_id.clone();
         let word = word.clone();
-        move |message: Message| {
+        move |_message: Message| {
             Box::pin(async move {
                 let exists = get_word_valid(word.clone()).await;
-                let mut next_message;
+                let next_message;
                 if exists {
                     next_message = format!("{} が見つかりました。", word);
                 } else {
-                    next_message = format!("{} は見つかりませんでした。", word);
+                    next_message = format!("{} は dictionary apiでは見つかりませんでした。", word);
                 }
 
                 generate_basic_message(next_message.as_str())
@@ -144,10 +143,41 @@ async fn manage_find_word(channel_id: String, word: String) {
 }
 
 async fn manage_like_word(channel_id: String, word: String) {
-    
+    let gen_after = {
+        let channel_id = channel_id.clone();
+        let word = word.clone();
+        move |_message: Message| {
+            Box::pin(async move {
+                let (piece, distance): (Option<Vec<String>>, Option<Vec<String>>) = tokio::join!(
+                    find_piece_equals(channel_id.clone(), word.clone()),
+                    find_levenstein_distance(channel_id.clone(), word.clone(), 0.3)
+                );
+
+                let mut result = Vec::<String>::new();
+                if let Some(piece) = piece {
+                    result = piece;
+                }
+                if let Some(dist) = distance {
+                    result.extend(dist);
+                }
+
+                let next_message;
+                if result.is_empty() {
+                    next_message = format!("{} に近似する単語は使用されていません。", word);
+                } else {
+                    let joined_result = result.join("\n");
+                    next_message = format!("{} に近い単語\\n{}\\nが見つかりました。", word, joined_result);
+                }
+
+                generate_basic_message(next_message.as_str())
+            }) as Pin<Box<dyn Future<Output = String> + Send>>
+        }
+    };
+
+    send_and_patch(channel_id, format!("{} を使用単語から検索中...", word), gen_after).await;
 }
 
-async fn manage_valid_vote(channel_id: String, word: String) {
+async fn manage_valid_vote(_channel_id: String, _word: String) {
 
 }
 
