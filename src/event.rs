@@ -150,7 +150,7 @@ async fn manage_like_word(channel_id: String, word: String) {
             Box::pin(async move {
                 let (piece, distance): (Option<Vec<String>>, Option<Vec<String>>) = tokio::join!(
                     find_piece_equals(channel_id.clone(), word.clone()),
-                    find_levenstein_distance(channel_id.clone(), word.clone(), CONFIG::msg_dist_threshold)
+                    find_levenstein_distance(channel_id.clone(), word.clone(), CONFIG.msg_dist_threshold)
                 );
 
                 let mut result = Vec::<String>::new();
