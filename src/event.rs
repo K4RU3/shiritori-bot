@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, thread::sleep};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -90,10 +90,10 @@ pub async fn check_word(word: String, channel_id: String) {
         replaced = replaced.to_lowercase();
         replaced = space_reg.replace_all(&replaced, " ").to_string();
 
-        spawn!(manage_exsist_word(channel_id.clone(), replaced.clone()));
-        spawn!(manage_find_word(channel_id.clone(), replaced.clone()));
-        spawn!(manage_like_word(channel_id.clone(), replaced.clone()));
-        spawn!(manage_valid_vote(channel_id.clone(), replaced.clone()));
+        manage_exsist_word(channel_id.clone(), replaced.clone()).await;
+        manage_find_word(channel_id.clone(), replaced.clone()).await;
+        manage_like_word(channel_id.clone(), replaced.clone()).await;
+        manage_valid_vote(channel_id.clone(), replaced.clone()).await;
     }
 }
 
@@ -181,7 +181,7 @@ async fn manage_valid_vote(_channel_id: String, _word: String) {
 
 }
 
-async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second_message: F) where F: FnOnce(Message) -> Pin<Box<dyn Future<Output = String> + Send>>, {
+async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second_message: F) where F: FnOnce(Message) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + 'static, {
     let client = generate_client();
     let first_message_raw = generate_basic_message(first_message.as_str());
     let res = match client.post(format!("{}/channels/{}/messages", CONFIG.base_api_url, channel_id)).body(first_message_raw).send().await {
@@ -189,20 +189,22 @@ async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second
         Err(_) => return,
     };
     
-    let json: Message = match res.json().await {
-        Ok(json) => json,
-        Err(_) => {
-            verbose_log_async("Failed to parse message").await;
-            return
-        }
-    };
-
-    let message_id = json.id.clone();
-
-    let second_message = gen_second_message(json).await;
-
-    match client.patch(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, channel_id, message_id)).body(second_message).send().await {
-        Ok(res) => verbose_log_async(format!("Message edit: {}", res.status()).as_str()).await,
-        Err(e) => verbose_log_async(format!("Failed to send message: {}", e).as_str()).await,
-    }
+    tokio::spawn(async move {
+        let json: Message = match res.json().await {
+            Ok(json) => json,
+            Err(_) => {
+                verbose_log_async("Failed to parse message").await;
+                return
+            }
+        };
+    
+        let message_id = json.id.clone();
+    
+        let second_message = gen_second_message(json).await;
+    
+        match client.patch(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, channel_id, message_id)).body(second_message).send().await {
+            Ok(res) => verbose_log_async(format!("Message edit: {}", res.status()).as_str()).await,
+            Err(e) => verbose_log_async(format!("Failed to send message: {}", e).as_str()).await,
+        };
+    });
 }
