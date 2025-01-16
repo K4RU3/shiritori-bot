@@ -1,6 +1,3 @@
-use scraper::{Html, Selector};
-use utility::generate_basic_message;
-
 mod utility;
 mod commands;
 mod gateway;

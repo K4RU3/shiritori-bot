@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{game::{channel_exists, contains_word, find_levenstein_distance, find_piece_equals, register, CHANNELS}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+use crate::{game::{channel_exists, contains_word, find_levenstein_distance, find_piece_equals, register, save_channel, CHANNELS}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
 
 lazy_static! {
     static ref VOTES: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -181,7 +181,7 @@ async fn manage_find_weblio_word(channel_id: String, word: String) {
                                 meanings += element.inner_html().trim();
                             }
 
-                            return generate_basic_message(format!("weblio で {} が見つかりました。\\n意味: {}", word, meanings).as_str());
+                            return generate_basic_message(format!("weblio で {} が見つかりました。\\n - 意味: {}", word, meanings).as_str());
                         } else {
                             return generate_basic_message(format!("weblio で {} は見つかりませんでした。", word).as_str());
                         }
@@ -214,11 +214,16 @@ async fn manage_like_word(channel_id: String, word: String) {
                     result.extend(dist);
                 }
 
+                result = result
+                    .iter()
+                    .map(|s| format!(" - {}", s))
+                    .collect();
+
                 let next_message;
                 if result.is_empty() {
                     next_message = format!("{} に近似する単語は使用されていません。", word);
                 } else {
-                    let joined_result = result.join("\n");
+                    let joined_result = result.join("\\n");
                     next_message = format!("{} に近い単語\\n{}\\nが見つかりました。", word, joined_result);
                 }
 
@@ -394,6 +399,8 @@ pub async fn update_vote(d: &serde_json::Value) {
                 let channel = channels.get_mut(&data.channel_id).unwrap();
                 channel.words.as_mut().unwrap().insert(word.to_string());
             }
+
+            save_channel(data.channel_id).await;
         }
     }
 }

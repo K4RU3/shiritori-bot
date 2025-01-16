@@ -99,7 +99,20 @@ pub async fn load_channel(channel_id: String) -> Result<(), i32> {
 }
 
 pub async fn save_channel(_channel_id: String) {
-    todo!();
+    let channels = CHANNELS.read().await;
+    let channel = channels.get(&_channel_id).unwrap();
+
+    let channel_file_path = format!("channels/{}/data.json", _channel_id);
+    let channel_data = serde_json::to_string(&channel).unwrap();
+
+    let mut file = match File::create(&channel_file_path).await {
+        Ok(file) => file,
+        Err(_) => {
+            verbose_log_async(format!("Failed to open file: {}", channel_file_path).as_str()).await;
+            return;
+        }
+    };
+    file.write_all(channel_data.as_bytes()).await.unwrap();
 }
 
 pub async fn _save_all_channels() {
