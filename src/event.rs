@@ -1,4 +1,4 @@
-use std::{collections::HashSet, future::Future, pin::Pin};
+use std::{collections::HashMap, future::Future, pin::Pin};
 use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use crate::{game::{channel_exists, contains_word, find_levenstein_distance, find_piece_equals, register, CHANNELS}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
 
 lazy_static! {
-    static ref VOTES: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+    static ref VOTES: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
 }
 
 const VALID_VOTE: &str = "👍";
@@ -112,6 +112,7 @@ pub async fn check_word(word: String, channel_id: String) {
 
         manage_exsist_word(channel_id.clone(), replaced.clone()).await;
         manage_find_word(channel_id.clone(), replaced.clone()).await;
+        manage_find_weblio_word(channel_id.clone(), replaced.clone()).await;
         manage_like_word(channel_id.clone(), replaced.clone()).await;
         manage_valid_vote(channel_id.clone(), replaced.clone()).await;
     }
@@ -160,6 +161,10 @@ async fn manage_find_word(channel_id: String, word: String) {
     };
 
     send_and_patch(channel_id, format!("{} を dictionary api で検索中...", word), gen_after).await;
+}
+
+async fn manage_find_weblio_word(channel_id: String, word: String) {
+    
 }
 
 async fn manage_like_word(channel_id: String, word: String) {
@@ -219,7 +224,7 @@ async fn manage_valid_vote(channel_id: String, word: String) {
     
     {
         let mut vote_lock = VOTES.write().await;
-        vote_lock.insert(msg_id);
+        vote_lock.insert(channel_id.clone(), msg_id);
     }
 
     // up %F0%9F%91%8D%EF%B8%8F
@@ -280,9 +285,8 @@ pub async fn update_vote(d: &serde_json::Value) {
     {
         let votes = VOTES.write().await;
 
-        if !votes.contains(data.message_id.as_str()) {
-            verbose_log_async("Message is not vote message").await;
-            return;
+        if let Some(vote_message_id) = votes.get(&data.channel_id) {
+            if vote_message_id !=  data.message_id.as_str() { return; }
         }
 
         let client = generate_client();
