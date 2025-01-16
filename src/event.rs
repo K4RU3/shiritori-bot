@@ -6,11 +6,14 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{game::{channel_exists, contains_word, register, find_levenstein_distance, find_piece_equals}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
+use crate::{game::{channel_exists, contains_word, find_levenstein_distance, find_piece_equals, register, CHANNELS}, utility::{generate_basic_message, generate_client, get_word_valid, verbose_log_async, CONFIG}};
 
 lazy_static! {
     static ref VOTES: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
 }
+
+const VALID_VOTE: &str = "👍";
+const INVALID_VOTE: &str = "👎";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Message {
@@ -20,19 +23,17 @@ struct Message {
     channel_id: String,
     content: String,
     mentions: Vec<User>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
-    reactions: Option<Reaction>,
+    reactions: Option<Vec<Reaction>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Reaction {
     count: u8,
-    count_details: Vec<CountDetails>,
+    count_details: CountDetails,
     me: bool,
     me_burst: bool,
-    //emoji:
-    burst_colors: Vec<u8>
+    emoji: Emoji
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,7 +61,7 @@ struct UpdateReaction {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Emoji {
-    name: String
+    name: String,
 }
 
 pub async fn check_mention_for_me(event: &serde_json::Value) -> Result<(), ()> {
@@ -198,7 +199,7 @@ async fn manage_like_word(channel_id: String, word: String) {
 
 async fn manage_valid_vote(channel_id: String, word: String) {
     let client = generate_client();
-    let message = generate_basic_message(format!("{} の有効投票を開始します。", word).as_str());
+    let message = generate_basic_message(format!("「{}」 の有効投票を開始します。", word).as_str());
 
     let res = match client.post(format!("{}/channels/{}/messages", CONFIG.base_api_url, channel_id)).body(message).send().await {
         Ok(res) => res,
@@ -223,8 +224,8 @@ async fn manage_valid_vote(channel_id: String, word: String) {
 
     // up %F0%9F%91%8D%EF%B8%8F
     // down %F0%9F%91%8E%EF%B8%8F
-    send_vote(client.clone(), channel_id.clone(), json.id.clone(), "👍".to_string()).await;
-    send_vote(client, channel_id, json.id.clone(), "👎".to_string()).await;
+    send_vote(client.clone(), channel_id.clone(), json.id.clone(), VALID_VOTE.to_string()).await;
+    send_vote(client, channel_id, json.id.clone(), INVALID_VOTE.to_string()).await;
 }
 
 async fn send_vote(client: Client, channel_id: String, message_id: String, vote: String) {
@@ -268,11 +269,97 @@ pub async fn update_vote(d: &serde_json::Value) {
         }
     };
 
+    if !(data.emoji.name == VALID_VOTE || data.emoji.name == INVALID_VOTE) { 
+        verbose_log_async("Reaction emoji is not vote emoji").await;
+        return;
+    }
+
+    let target_reaction = data.emoji.name;
+
+    let message;
     {
         let votes = VOTES.write().await;
 
-        if !votes.contains(data.message_id.as_str()) { return; }
+        if !votes.contains(data.message_id.as_str()) {
+            verbose_log_async("Message is not vote message").await;
+            return;
+        }
+
+        let client = generate_client();
+        match client.get(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, data.channel_id, data.message_id)).send().await {
+            Ok(res) => {
+                let text = res.text().await.unwrap_or("".to_string());
+                message = match serde_json::from_str::<Message>(text.as_str()) {
+                    Ok(message) => message,
+                    Err(err) => {
+                        verbose_log_async("Failed to parse message").await;
+                        verbose_log_async(err.to_string().as_str()).await;
+                        return;
+                    }
+                };
+            },
+            Err(_) => {
+                verbose_log_async("Failed to get message").await;
+                return;
+            }
+        };
     }
 
-    //let res = match 
+    let reactions = match message.reactions {
+        Some(reactions) => reactions,
+        None => {
+            verbose_log_async("reactions is none").await;
+            return;
+        }
+    };
+
+    let target_reaction = reactions.iter().find(|x| x.emoji.name == target_reaction);
+
+    let match_reaction = match target_reaction {
+        Some(reaction) => reaction,
+        None => {
+            verbose_log_async("target reaction is none").await;
+            return;
+        }
+    };
+
+    if match_reaction.count >= CONFIG.vote_count {
+        verbose_log_async("Vote count is over").await;
+
+        {
+            let mut votes = VOTES.write().await;
+            votes.remove(data.message_id.as_str());
+        }
+
+        let client = generate_client();
+        let _ = client.delete(format!("{}/channels/{}/messages/{}/reactions", CONFIG.base_api_url, data.channel_id, data.message_id)).send().await;
+
+        let new_message;
+        if match_reaction.emoji.name == VALID_VOTE {
+            new_message = "可決されました。この単語を使用リストに追加します。";
+        } else {
+            new_message = "否決されました。";
+        }
+
+        let new_raw_message = generate_basic_message(new_message);
+
+        match client.patch(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, data.channel_id, data.message_id)).body(new_raw_message).send().await {
+            Ok(res) => verbose_log_async(format!("Message edit: {}", res.status()).as_str()).await,
+            Err(e) => verbose_log_async(format!("Failed to send message: {}", e).as_str()).await,
+        }
+
+        let word_regex = regex::Regex::new(r"^「([a-zA-Z][a-zA-Z\s\-]*[a-zA-Z])」.*$").unwrap();
+        let word = match word_regex.captures(message.content.as_str()) {
+            Some(captures) => captures.get(1).unwrap().as_str(),
+            None => return
+        };
+
+        if match_reaction.emoji.name == VALID_VOTE {
+            {
+                let mut channels = CHANNELS.write().await;
+                let channel = channels.get_mut(&data.channel_id).unwrap();
+                channel.words.as_mut().unwrap().insert(word.to_string());
+            }
+        }
+    }
 }

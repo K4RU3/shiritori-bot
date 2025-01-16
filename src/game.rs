@@ -17,9 +17,9 @@ lazy_static! {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Channel {
-    channel_id: String,
-    users: VecDeque<String>,
-    words: Option<BTreeSet<String>>
+    pub channel_id: String,
+    pub users: VecDeque<String>,
+    pub words: Option<BTreeSet<String>>
 }
 
 pub async fn register(original_id: String) -> Result<(), i32> {

@@ -13,6 +13,7 @@ pub struct BotConfig {
     pub content_type: String,
     pub auth: String,
     pub msg_dist_threshold: f64,
+    pub vote_count: u8,
 }
 
 impl BotConfig {
@@ -26,6 +27,14 @@ impl BotConfig {
                 "0.3".to_string()
             }
         };
+        let vote_count = match std::env::var("VOTE_COUNT") {
+            Ok(val) => val,
+            Err(_) => {
+                println!("VOTE_COUNT is not set, defaulting to 3");
+                "3".to_string()
+            }
+        };
+        
         Self {
             base_api_url: String::from("https://discord.com/api/v10"),
             token: token.clone(),
@@ -34,6 +43,7 @@ impl BotConfig {
             content_type: String::from("application/json"),
             auth: format!("Bot {}", token),
             msg_dist_threshold: threshold.parse().unwrap_or(0.3),
+            vote_count: vote_count.parse().unwrap_or(3),
         }
     }
 }
