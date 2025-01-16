@@ -1,6 +1,7 @@
 use std::{collections::HashMap, future::Future, pin::Pin};
 use regex::Regex;
 use reqwest::Client;
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use lazy_static::lazy_static;
 use std::sync::Arc;
@@ -164,7 +165,34 @@ async fn manage_find_word(channel_id: String, word: String) {
 }
 
 async fn manage_find_weblio_word(channel_id: String, word: String) {
-    
+    let gen_after = {
+        let word = word.clone();
+        move |_message: Message| {
+            Box::pin(async move {
+                match reqwest::get(format!("https://ejje.weblio.jp/content/{}", word)).await {
+                    Ok(res) => {
+                        if res.status().is_success() {
+                            let body = res.text().await.unwrap();
+                            let document = Html::parse_document(&body);
+                            let selector = Selector::parse(".content-explanation").unwrap();
+
+                            let mut meanings = String::from("");
+                            for element in document.select(&selector) {
+                                meanings += element.inner_html().trim();
+                            }
+
+                            return generate_basic_message(format!("weblio で {} が見つかりました。\\n意味: {}", word, meanings).as_str());
+                        } else {
+                            return generate_basic_message(format!("weblio で {} は見つかりませんでした。", word).as_str());
+                        }
+                    },
+                    Err(_) => generate_basic_message("Internal Error.")
+                }
+            }) as Pin<Box<dyn Future<Output = String> + Send>>
+        }
+    };
+
+    send_and_patch(channel_id, format!("{} を意味を weblio で検索中...", word), gen_after).await;
 }
 
 async fn manage_like_word(channel_id: String, word: String) {
@@ -257,6 +285,8 @@ async fn send_and_patch<F>(channel_id: String, first_message: String, gen_second
         let message_id = json.id.clone();
     
         let second_message = gen_second_message(json).await;
+
+        println!("second message: {}", second_message);
     
         match client.patch(format!("{}/channels/{}/messages/{}", CONFIG.base_api_url, channel_id, message_id)).body(second_message).send().await {
             Ok(res) => verbose_log_async(format!("Message edit: {}", res.status()).as_str()).await,
